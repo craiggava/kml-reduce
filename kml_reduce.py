@@ -18,7 +18,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Reduce a KML file to less points using RDP algorithm")
     parser.add_argument('infile')
     parser.add_argument('outdir')
-    parser.add_argument('--epsilon', type=int, default=-1)
+    parser.add_argument('--epsilon', type=float, default=-1)
     parser.add_argument('--verbose', type=int, default=0)
  
     args = parser.parse_args()
@@ -33,7 +33,8 @@ if __name__ == '__main__':
     with in_file:
         kml_doc = pykmlParser.parse(in_file)
 
-    rdp_coords_list = []
+    rdp_coords = []
+    placemarks = []
 
     for pm in kml_doc.getroot().Document.Placemark:
         print("Placemark=", pm.name)
@@ -44,7 +45,19 @@ if __name__ == '__main__':
             for coord in coords_list:
                 oneCoord = coord.split(",")
                 if (len(oneCoord) > 2):
-                    rdp_coords_list.append([float(oneCoord[0]), float(oneCoord[1]), float(oneCoord[2])])
+                    rdp_coords.append([float(oneCoord[0]), float(oneCoord[1]), float(oneCoord[2])])
+        elif (hasattr(pm, "name") and hasattr(pm, "styleUrl") and hasattr(pm, "Point")):
+            if (args.verbose > 0):
+                print("Processing placemark: ", pm.name, " at ", pm.Point.coordinates)
+                placemarks.append(KML.Placemark(
+                                                 KML.name(pm.name),
+                                                 KML.styleUrl(pm.styleUrl),
+                                                 KML.Point(
+                                                        pm.Point.coordinates
+                                                    )
+                                                )
+                                    )
+
 
     in_file.close()
 
@@ -56,9 +69,9 @@ if __name__ == '__main__':
         # attempt to determine a reasonable value of epsilon in the RDP algorithm.
         # In my experimentation, the median is the optimal choice.
         point_distances = []
-        for idx in range(len(rdp_coords_list) - 1):
-            start = np.array(rdp_coords_list[idx])
-            end = np.array(rdp_coords_list[idx + 1])
+        for idx in range(len(rdp_coords) - 1):
+            start = np.array(rdp_coords[idx])
+            end = np.array(rdp_coords[idx + 1])
             dist = np.linalg.norm(end - start)
             point_distances.append(dist)
 
@@ -71,26 +84,30 @@ if __name__ == '__main__':
                     [np.ma.min(distance_array) * 4, "min_mult_4"]
                    ]
     else:
-        epsilons = [args.epsilon, string(args.epsilon)]
+        epsilons = [[args.epsilon, str(args.epsilon)]]
 
     for epsilon in epsilons:
-        reduced_kml = rdp(rdp_coords_list, epsilon[0])
-        print("Epsilon =", epsilon[1], ", Reduced List has ", len(reduced_kml),
-               " elements from ", len(rdp_coords_list))
+        reduced_kml = rdp(rdp_coords, epsilon[0])
+        print("Epsilon =", epsilon[1], "(", epsilon[0], "), Reduced List has ", len(reduced_kml),
+               " elements from ", len(rdp_coords))
 
-        reduced_coords = "\n        ".join(map(coord_to_str, reduced_kml))
+        reduced_coords = "\n          " + \
+                            "\n          ".join(map(coord_to_str, reduced_kml)) + \
+                            "\n        "
 
-        kml_out = KML.kml(
-                   KML.Document(
-                        KML.Placemark(
-                            KML.name(base_file_name),
-                            KML.LineString(
-                                KML.coordinates(reduced_coords)
-                            )
-                        )
+        kml_out = KML.Document(
+                    KML.Placemark(
+                                    KML.name(base_file_name),
+                                    KML.LineString(
+                                        KML.coordinates(reduced_coords)
+                                    )
+                                )
                     )
-        )
 
+        for pm in placemarks:
+            kml_out.append(pm)
+
+        kml_out = KML.kml(kml_out)
         outfile_name =  args.outdir + "/" + base_file_name + "_e_" + epsilon[1] + ".kml"
         try:
             out_file = open(outfile_name, "w")
